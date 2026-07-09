@@ -9,7 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
-from constants import ARTICLE_NOT_FOUND_MSG
+from constants import ARTICLE_NOT_FOUND_MSG, DATE_PATTERNS
 
 
 @dataclass
@@ -48,6 +48,15 @@ class MediumToMarkdownConverter:
         return resp.text
 
     def _to_markdown(self, tag, *, base: str) -> str:
+        """HTML → Markdown via markdownify; make image/video URLs absolute."""
+        for picture in tag.find_all("picture"):
+            img = picture.find("img")
+            source = picture.find("source", attrs={"srcset": True})
+
+            if img and source and not img.has_attr("src"):
+                img["src"] = source["srcset"].split(",")[0].split()[0]
+
+        # First convert any <img src> / <a href> that are relative.
         for el in tag.find_all(["img", "a"]):
             attr = "src" if el.name == "img" else "href"
             if el.has_attr(attr):
@@ -65,8 +74,21 @@ class MediumToMarkdownConverter:
         cleaned_lines: list[str] = []
         for line in markdown.splitlines():
             # Skip embedded sign-in / image proxies.
-            if any(u in line for u in ("miro.medium.com", "medium.com/m/signin")):
+
+           # Remove Medium sign-in links
+            if "medium.com/m/signin" in line:
                 continue
+
+# Remove plain Medium image URLs, but keep Markdown images
+            if (
+                "miro.medium.com" in line
+                and not line.strip().startswith("![](")
+                or "medium.com/m/signin" in line
+            ):
+                continue
+
+            # if any(u in line for u in ("miro.medium.com", "medium.com/m/signin")):
+            #     continue
 
             # Skip common Medium template phrases.
             if re.search(r"Published in|Listen|Share", line):
@@ -81,7 +103,7 @@ class MediumToMarkdownConverter:
                 continue
 
             # Remove published date like "1 day ago", "2 days ago", "5 hours ago"
-            if re.fullmatch(r"\d+\s+(day|days|hour|hours|week|weeks|month|months|year|years)\s+ago", line.strip()):
+            if any(pattern.fullmatch(line.strip()) for pattern in DATE_PATTERNS):
                 continue
 
             # Remove separator lines
